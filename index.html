@@ -1618,6 +1618,7 @@ function renderActiepunten(naam) {
         <div class="act-text">${a.done ? '<s style="color:#999">' + a.tekst + '</s>' : a.tekst}</div>
         <div class="act-dl ${dlClass}">📅 ${dlLabel}${overdue ? ' (te laat)' : ''}</div>
       </div>
+      ${(!a.done && a.hulpToel) ? `<div class="act-history" style="font-size:12px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;margin-top:6px;white-space:pre-wrap;line-height:1.5"><strong style="color:#92400e">Eerdere toelichting(en):</strong>\n${esc(a.hulpToel)}</div>` : ''}
       ${a.done ? '<div style="font-size:12px;color:#1A6B3C;margin-top:6px;font-weight:600">✓ Afgerond</div>' : `<div class="act-btns">
         <button class="act-btn btn-done" onclick="markAction(${i},'done')">✓ Gedaan</button>
         <button class="act-btn btn-notdone" onclick="markAction(${i},'notdone')">✗ Niet gedaan</button>
@@ -2375,7 +2376,18 @@ async function saveAccountability(btn) {
     } else if (isNotDone) {
       const reason = item.querySelector('.act-reason') ? item.querySelector('.act-reason').value.trim() : '';
       const newDl = item.querySelector('.act-newdl') ? item.querySelector('.act-newdl').value : '';
-      updates.push({ id, status: 'open', hulp_toelichting: reason, deadline: newDl });
+      // Toelichting-geschiedenis bewaren: nieuwe reden bovenaan, eerdere regels behouden,
+      // zodat bij een volgende meeting nog leesbaar is waarom de taak eerder is uitgesteld.
+      const prevToel = (a.hulpToel || '').trim();
+      let combined = prevToel;
+      if (reason) {
+        const stamp = new Date(today + 'T00:00:00').toLocaleDateString('nl-NL', {day:'numeric',month:'short',year:'numeric'});
+        const fmtDl = d => d ? new Date(d + 'T00:00:00').toLocaleDateString('nl-NL',{day:'numeric',month:'short'}) : '?';
+        const moved = (a.dl && newDl && a.dl !== newDl) ? ` (deadline ${fmtDl(a.dl)} → ${fmtDl(newDl)})` : '';
+        const entry = `[${stamp}]${moved} ${reason}`;
+        combined = prevToel ? entry + '\n' + prevToel : entry;
+      }
+      updates.push({ id, status: 'open', hulp_toelichting: combined, deadline: newDl });
     }
   });
   try {
@@ -3687,7 +3699,7 @@ function renderDash(updates, actiepunten, e3Items, snapshotMarker, snapshotUpdat
           html += ` <span style="font-size:11px;color:${overdue?'#e74c3c':'#888'}">📅 ${dlLabel}${overdue?' (te laat)':''}</span>`;
         }
         if (i.dod) html += `<div style="font-size:11px;color:#005A5B;margin-top:4px"><strong>DoD:</strong> ${esc(i.dod)}</div>`;
-        if (i.hulpToel) html += `<div style="font-size:12px;color:#b45309;margin-top:4px;font-style:italic">💬 ${esc(i.hulpToel)}</div>`;
+        if (i.hulpToel) html += `<div style="font-size:12px;color:#b45309;margin-top:4px;font-style:italic;white-space:pre-wrap;line-height:1.5">💬 ${esc(i.hulpToel)}</div>`;
         if (i.hulp && ['ja','yes'].includes(i.hulp.toLowerCase()) && !i.hulpToel) html += `<div style="font-size:11px;color:#e74c3c;margin-top:4px">🙋 Hulp nodig</div>`;
         html += '</div>';
       });
