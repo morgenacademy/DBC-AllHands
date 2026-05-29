@@ -1884,7 +1884,12 @@ async function ensureAllHandsSnapshotBackfill() {
 }
 
 // ═══ TABS ══════════════════════════════════════════════
-function go(t) {
+// ── ROUTING: clean URL per tabblad ──
+const SLUG_BY_TAB = { afspraken:'', dashboard:'dashboard', invullen:'updates', e3:'e3', overzicht:'inkomstenstromen' };
+const TAB_BY_SLUG = { '':'afspraken', afspraken:'afspraken', dashboard:'dashboard', updates:'invullen', e3:'e3', inkomstenstromen:'overzicht' };
+let e3RenderedMeeting = null; // welke meeting nu in de E3-tab staat (load-guard tegen herrenderen)
+
+function go(t, push = true) {
   ['afspraken','overzicht','invullen','dashboard','e3'].forEach(id => {
     const v = document.getElementById('v-'+id), b = document.getElementById('btn-'+id);
     if(v) v.classList.remove('active'); if(b) b.classList.remove('active');
@@ -1892,9 +1897,23 @@ function go(t) {
   document.getElementById('v-'+t).classList.add('active');
   document.getElementById('btn-'+t).classList.add('active');
   if (t === 'dashboard') { loadDash(); dashNeedsRefresh = false; }
-  if (t === 'e3') loadE3Agenda();
+  if (t === 'e3') {
+    // Niet passief herladen: behoudt ongeslagen conclusie-tekst + lopende timer bij tabwissel.
+    const m = (getActiveE3Meeting() || {}).val || null;
+    if (e3RenderedMeeting !== m) loadE3Agenda();
+  }
+  if (push) {
+    const slug = SLUG_BY_TAB[t] ?? t;
+    try { history.pushState({ tab: t }, '', '/' + slug); } catch(e) { /* file:// / niet toegestaan */ }
+  }
   // Updates tab = clean form for new input only (editing in Dashboard)
 }
+
+function applyRouteFromUrl() {
+  const slug = (location.pathname || '/').replace(/^\/+|\/+$/g, '');
+  go(TAB_BY_SLUG[slug] || 'afspraken', false);
+}
+window.addEventListener('popstate', applyRouteFromUrl);
 
 function saveName() {
   const naam = document.getElementById('f-naam').value;
@@ -2036,15 +2055,17 @@ async function loadSharedProjects() {
 async function loadLastYTD() {
   try {
     const rows = await sbGet('updates');
-    // Find the latest non-empty YTD per stream
+    // Laatst ingevoerde YTD>0 per stroom (op created_at) — consistent met Financieel overzicht
     const ytdByStream = {};
+    const atByStream = {};
     rows.forEach(row => {
       const stroom = row.stroom || '';
-      const ytd = row.target_ytd || '';
-      const persoon = row.persoon || '';
-      if (stroom && ytd !== '') {
-        const val = parseFloat(ytd.toString().replace(/[€\s.]/g,'').replace(',','.')) || 0;
-        ytdByStream[stroom] = { val, persoon };
+      const val = parseYtdValue(row.target_ytd);
+      if (!stroom || val <= 0) return;
+      const at = String(row.created_at || '');
+      if (!(stroom in atByStream) || at >= atByStream[stroom]) {
+        atByStream[stroom] = at;
+        ytdByStream[stroom] = { val, persoon: row.persoon || '' };
       }
     });
     // Update the "Al gerealiseerd" display and progress bar
@@ -2280,6 +2301,16 @@ async function saveYTD(sid, btn) {
       status: '',
       target_ytd: parseFloat(tVal) || 0
     });
+    // Direct feedback: 'Al gerealiseerd'-blok + voortgangsbalk meteen bijwerken
+    const savedVal = parseFloat(tVal) || 0;
+    const disp = document.getElementById('ytd-display-' + sid);
+    if (disp) { const tv = disp.querySelector('.tv'); if (tv) tv.textContent = '€' + Math.round(savedVal).toLocaleString('nl-NL'); }
+    if (stream && stream.target) {
+      const pct = Math.min(Math.round((savedVal / stream.target) * 100), 100);
+      const pf = document.getElementById('pf-' + sid);
+      if (pf) { pf.style.width = pct + '%'; pf.style.background = pct >= 80 ? '#1A6B3C' : pct >= 40 ? '#B7860B' : '#e74c3c'; }
+    }
+    document.getElementById('tgt-' + sid).value = ''; // veld legen voor volgende invoer
     document.getElementById('ytd-saved-' + sid).style.display = 'inline';
     dashNeedsRefresh = true;
     btn.textContent = '✓ Opgeslagen'; btn.style.background = '#1A6B3C';
@@ -2902,6 +2933,19 @@ async function persistE3Order() {
   }
 }
 
+// Bewaar conclusie/besluit als lokaal concept zodat tekst niet verdwijnt bij tabwissel/refresh.
+function onConclusieDraft(el) {
+  const k = el.dataset.draftkey;
+  if (k) { try { localStorage.setItem('e3cdraft:' + k, el.value); } catch(e) {} }
+  el.style.borderColor = '#ccc';
+  const lbl = el.parentElement.querySelector('.e3-save-label'); if (lbl) lbl.textContent = '';
+  const btn = el.nextElementSibling; if (btn && btn.tagName === 'BUTTON') { btn.textContent = '💾'; btn.style.background = '#005A5B'; }
+}
+function clearConclusieDraft(el) {
+  const k = el && el.dataset ? el.dataset.draftkey : '';
+  if (k) { try { localStorage.removeItem('e3cdraft:' + k); } catch(e) {} }
+}
+
 async function saveE3Conclusie(textarea) {
   const id = textarea.dataset.id || '';
   if (!id) return;
@@ -2910,14 +2954,15 @@ async function saveE3Conclusie(textarea) {
   if (btn) { btn.textContent = '...'; btn.disabled = true; }
   try {
     await sbUpdate('e3_agenda', 'id=eq.' + id, { conclusie });
+    clearConclusieDraft(textarea); // opgeslagen in DB -> lokaal concept weg
     if (btn) { btn.textContent = '✓'; btn.style.background = '#1A6B3C'; btn.disabled = false; }
     textarea.style.borderColor = '#1A6B3C';
     // Show saved label
     let label = textarea.parentElement.querySelector('.e3-save-label');
     if (!label) { label = document.createElement('div'); label.className = 'e3-save-label'; label.style.cssText = 'font-size:10px;color:#1A6B3C;font-weight:600;margin-top:2px'; textarea.parentElement.appendChild(label); }
     label.textContent = '✓ Opgeslagen';
-    // Mark unsaved on next edit
-    textarea.oninput = () => { textarea.style.borderColor = '#ccc'; if (label) label.textContent = ''; btn.textContent = '💾'; btn.style.background = '#005A5B'; };
+    // Mark unsaved on next edit (en blijf concept lokaal bewaren)
+    textarea.oninput = () => onConclusieDraft(textarea);
   } catch(e) {
     if (btn) { btn.textContent = '✗'; btn.style.background = '#e74c3c'; btn.disabled = false; }
     textarea.style.borderColor = '#e74c3c';
@@ -3245,6 +3290,9 @@ async function loadE3Agenda() {
         const tijd = row.tijd || '5';
         const conclusie = row.conclusie || '';
         const agendaId = String(row.id || '');
+        const cDraftKey = 'dyn:' + agendaId;
+        const cDraftVal = localStorage.getItem('e3cdraft:' + cDraftKey);
+        const cInit = (cDraftVal !== null) ? cDraftVal : conclusie; // toon lokaal concept als dat er is
         const questions = (questionsByAgendaId[agendaId] || []).filter(item => item.meeting === activeMeetingVal);
         const myQuestion = currentUser ? questions.find(item => item.persoon === currentUser) : null;
         const questionWindow = getE3QuestionWindowInfo(activeMeetingVal);
@@ -3304,7 +3352,7 @@ async function loadE3Agenda() {
           </div>
           <div style="margin:8px 0 4px 32px">
             <div style="display:flex;gap:6px;align-items:flex-start">
-              <textarea class="e3-conclusie" data-id="${escAttr(row.id)}" placeholder="Conclusie / besluit — pas invullen tijdens het overleg" rows="2" style="flex:1;font-size:12px;border:1px dashed #ccc;border-radius:6px;padding:6px 10px;background:#fafafa;resize:vertical;font-family:inherit;color:#333">${escAttr(conclusie)}</textarea>
+              <textarea class="e3-conclusie" data-id="${escAttr(row.id)}" data-draftkey="${escAttr(cDraftKey)}" oninput="onConclusieDraft(this)" placeholder="Conclusie / besluit — pas invullen tijdens het overleg" rows="2" style="flex:1;font-size:12px;border:1px dashed #ccc;border-radius:6px;padding:6px 10px;background:#fafafa;resize:vertical;font-family:inherit;color:#333">${escAttr(cInit)}</textarea>
               <button onclick="saveE3Conclusie(this.previousElementSibling)" style="padding:6px 10px;border:none;border-radius:6px;background:#005A5B;color:#fff;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;align-self:stretch">💾</button>
             </div>
           </div>
@@ -3370,6 +3418,7 @@ async function loadE3Agenda() {
 
     if (previousContainer) previousContainer.innerHTML = previousHtml;
     container.innerHTML = html;
+    e3RenderedMeeting = activeMeetingVal; // markeer als gerenderd (go() herlaadt nu niet bij tabwissel)
     // Also load actiepunten list
     loadE3Actiepunten();
   } catch(e) {
@@ -3555,6 +3604,17 @@ async function loadDash() {
   } catch(err) { document.getElementById('dashC').innerHTML = `<div class="state"><div class="icon">⚠️</div><p>${err.message}</p></div>`; }
 }
 
+// YTD-waarde robuust lezen: Supabase levert een getal (bv. 347.25); oudere data kan een
+// opgemaakte string zijn ("€1.234,56"). NIET de punt uit een getal strippen — dat maakte
+// 347.25 ten onrechte 34725.
+function parseYtdValue(v) {
+  if (typeof v === 'number') return isFinite(v) ? v : 0;
+  let s = String(v ?? '').trim().replace(/[€\s]/g, '');
+  if (!s) return 0;
+  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.'); // NL: 1.234,56 -> 1234.56
+  return parseFloat(s) || 0;
+}
+
 function renderDash(updates, actiepunten, e3Items, snapshotMarker, snapshotUpdates) {
   let html = '';
   const C = { s:'stroom', p:'project', n:'persoon', u:'update_text', st:'status', t:'target_ytd', m:'maand' };
@@ -3574,9 +3634,9 @@ function renderDash(updates, actiepunten, e3Items, snapshotMarker, snapshotUpdat
     const su = currentCycleUpdates.filter(u => (u[C.s]||'') === s.name);
     const prevSu = previousAllHandsUpdates.filter(u => (u.stroom||'') === s.name && (u.project || u.update_text || u.doel || u.partner));
     if (!su.length && !prevSu.length) return;
-    const pm = {}; let lt = 0;
+    const pm = {}; let lt = 0; let ltAt = '';
     const statusWeight = {'Aandacht nodig':3,'Op schema':2,'Nieuw':1,'Afgerond':0};
-    su.forEach(u => { const pn = fmtProject(u[C.p]||'(algemeen)'); if(!pm[pn]) pm[pn]={entries:[],status:''}; pm[pn].entries.push(u); const ns=u[C.st]||''; if((statusWeight[ns]??-1)>(statusWeight[pm[pn].status]??-1)) pm[pn].status=ns; const tv=parseFloat(String(u[C.t]||'0').replace(/[€\s.]/g,'').replace(',','.'))||0; if(tv>lt) lt=tv; });
+    su.forEach(u => { const pn = fmtProject(u[C.p]||'(algemeen)'); if(!pm[pn]) pm[pn]={entries:[],status:''}; pm[pn].entries.push(u); const ns=u[C.st]||''; if((statusWeight[ns]??-1)>(statusWeight[pm[pn].status]??-1)) pm[pn].status=ns; const tv=parseYtdValue(u[C.t]); const at=String(u.created_at||''); if(tv>0 && at>=ltAt){ ltAt=at; lt=tv; } });
     const dc = s.id==='kat'?'d-kat':s.id==='bc'?'d-bc':s.id==='mer'?'d-mer':'d-oh';
     const pct = s.target ? Math.min(Math.round((lt/s.target)*100),100) : null;
     const pc = pct===null?'':pct>=80?'#1A6B3C':pct>=40?'#B7860B':'#e74c3c';
@@ -3748,10 +3808,16 @@ function renderDash(updates, actiepunten, e3Items, snapshotMarker, snapshotUpdat
   // ── SECTION 4: FINANCIAL SUMMARY (onderaan) ──
   html += '<div class="dash-section"><div class="dash-section-title" onclick="this.parentElement.classList.toggle(\'collapsed\')">💰 Financieel overzicht</div><div class="dash-section-body">';
   const ytdPerStream = {};
+  const ytdLatestAt = {};
   currentCycleUpdates.forEach(u => {
     const stroom = u[C.s] || '';
-    const tv = parseFloat((u[C.t]||'').toString().replace(/[€\s.]/g,'').replace(',','.')) || 0;
-    if (stroom && tv > (ytdPerStream[stroom] || 0)) ytdPerStream[stroom] = tv;
+    const tv = parseYtdValue(u[C.t]);
+    if (!stroom || tv <= 0) return; // lege/0 YTD negeren: gewone project-updates resetten de teller niet
+    const at = String(u.created_at || '');
+    if (!(stroom in ytdLatestAt) || at >= ytdLatestAt[stroom]) { // laatst ingevoerde YTD wint (ook bij correctie omlaag)
+      ytdLatestAt[stroom] = at;
+      ytdPerStream[stroom] = tv;
+    }
   });
   let totalTarget = 0, totalRealized = 0;
   html += '<table class="fin-table"><thead><tr><th>Stroom</th><th>Doel (jaar)</th><th>Gerealiseerd (YTD)</th><th>Delta</th><th>%</th></tr></thead><tbody>';
@@ -3807,8 +3873,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   if (n) { document.getElementById('f-naam').value = n; renderActiepunten(n); }
   loadSharedProjects();
   loadActiepuntenFromSheet(); // try dynamic load from "Taken" tab
-  populateE3Meetings();
+  await populateE3Meetings();
   loadPreviousAllHandsReference(n || '');
+  applyRouteFromUrl(); // open tab volgens URL (refresh blijft op huidige tab)
 });
 
 </script>
