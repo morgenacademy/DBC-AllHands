@@ -2508,13 +2508,27 @@ async function populateE3Meetings() {
   // This picker is for upcoming E3 meetings only.
   options = options.filter(o => o.val >= todayStr);
 
+  // Laatst AFGESLOTEN meeting ophalen (DB-marker) -> default = eerste upcoming meeting DAARNA.
+  // DB-gedreven, dus geldt voor het hele team: na 'Meeting afsluiten' landt iedereen op de volgende.
+  let closedMeeting = '';
+  try {
+    const mk = await sbGet('log', 'type=eq.' + encodeURIComponent(ALLHANDS_SNAPSHOT_MARKER_TYPE) + '&order=created_at.desc&limit=1');
+    if (mk && mk.length) closedMeeting = String(parseJsonDetails(mk[0].details).meeting || '').trim();
+  } catch(e) {}
+  let defaultIdx = 0;
+  if (closedMeeting) {
+    const i = options.findIndex(o => o.val > closedMeeting);
+    if (i >= 0) defaultIdx = i;
+  }
+
   const prevVal = sel.value;
-  sel.innerHTML = options.map((o, i) => `<option value="${o.val}"${i===0?' selected':''}>${o.label}</option>`).join('');
-  // Herstel selectie: lopende sessie eerst, anders bewaarde keuze (overleeft refresh na 'Meeting afsluiten').
-  // ALLEEN herstellen als de meeting nog echt in de lijst staat; anders default (index 0). Voorkomt dat
-  // een verouderde/verplaatste datum uit localStorage een lege 'spookmeeting' toont.
+  sel.innerHTML = options.map((o, i) => `<option value="${o.val}"${i===defaultIdx?' selected':''}>${o.label}</option>`).join('');
+  // Herstel een eerdere keuze ALLEEN als het een nog-open upcoming meeting is (ná de afgesloten) die
+  // bestaat in de lijst. Anders blijft default (= eerste meeting na de afgesloten). Voorkomt landen op
+  // een gesloten meeting of een verouderde 'spookmeeting' uit localStorage.
   let savedVal = ''; try { savedVal = localStorage.getItem('dbc_e3_meeting') || ''; } catch(e) {}
-  const restoreVal = (prevVal && prevVal >= todayStr) ? prevVal : (savedVal && savedVal >= todayStr ? savedVal : '');
+  const candidate = (prevVal && prevVal >= todayStr) ? prevVal : (savedVal && savedVal >= todayStr ? savedVal : '');
+  const restoreVal = (candidate && (!closedMeeting || candidate > closedMeeting)) ? candidate : '';
   if (restoreVal) {
     for (let i = 0; i < sel.options.length; i++) {
       if (sel.options[i].value === restoreVal) { sel.selectedIndex = i; break; }
