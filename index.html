@@ -769,12 +769,21 @@ if (localStorage.getItem(AUTH_KEY) === '1') {
       <div class="hdr-t">DBC Inkomstenstromen & All Hands</div>
       <div class="hdr-s">Maandelijkse teamcheck · Commitment & eigenaarschap</div>
     </div>
-    <div class="tabs">
-      <button class="tab active" id="btn-afspraken" onclick="go('afspraken')">📘 Afspraken</button>
-      <button class="tab" id="btn-dashboard" onclick="go('dashboard')">📊 Dashboard</button>
-      <button class="tab" id="btn-invullen" onclick="go('invullen')">📝 Updates</button>
-      <button class="tab" id="btn-e3" onclick="go('e3')">🗓️ E3 Overleg</button>
-      <button class="tab" id="btn-overzicht" onclick="go('overzicht')">🗺️ Inkomstenstromen</button>
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <div class="tabs">
+        <button class="tab active" id="btn-afspraken" onclick="go('afspraken')">📘 Afspraken</button>
+        <button class="tab" id="btn-dashboard" onclick="go('dashboard')">📊 Dashboard</button>
+        <button class="tab" id="btn-invullen" onclick="go('invullen')">📝 Updates</button>
+        <button class="tab" id="btn-e3" onclick="go('e3')">🗓️ E3 Overleg</button>
+        <button class="tab" id="btn-overzicht" onclick="go('overzicht')">🗺️ Inkomstenstromen</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <label for="f-naam" style="font-size:11px;color:rgba(255,255,255,.7);white-space:nowrap">👤 Wie ben jij?</label>
+        <select id="f-naam" required onchange="saveName()" style="background:rgba(255,255,255,.15);border:1.5px solid rgba(255,255,255,.3);color:#fff;border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer">
+          <option value="" style="color:#222">Kies...</option>
+          <option style="color:#222">Anne</option><option style="color:#222">Danielle</option><option style="color:#222">Samira</option><option style="color:#222">Harmen</option>
+        </select>
+      </div>
     </div>
   </div>
 </header>
@@ -1332,18 +1341,9 @@ function toggleGeschrapt(el) {
   <div style="background:#005A5B;border-radius:14px;padding:22px 24px;margin-bottom:16px;color:#fff">
     <h2 style="font-size:18px;font-weight:700;margin-bottom:4px">Jouw maandupdate</h2>
     <p style="font-size:13px;opacity:.75;line-height:1.6;margin-bottom:16px">Vul dit in vóór de meeting (~5 min). Per stroom: welke projecten lopen er, wat heb je gedaan, hoe staat het.<br><a href="#" onclick="go('overzicht');return false" style="color:#F2B484;font-weight:600;text-decoration:none;font-size:12px">📊 Bekijk het overzicht van inkomstenstromen &amp; targets →</a></p>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div>
-        <label for="f-naam" style="color:rgba(255,255,255,.7);font-size:12px">Wie ben jij?</label>
-        <select id="f-naam" required onchange="saveName()" style="background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.25);color:#fff">
-          <option value="" style="color:#222">Kies...</option>
-          <option style="color:#222">Anne</option><option style="color:#222">Danielle</option><option style="color:#222">Samira</option><option style="color:#222">Harmen</option>
-        </select>
-      </div>
-      <div>
-        <label style="color:rgba(255,255,255,.7);font-size:12px">Update over</label>
-        <input type="text" id="f-maand" readonly style="background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2);color:rgba(255,255,255,.8);text-transform:capitalize">
-      </div>
+    <div>
+      <label style="color:rgba(255,255,255,.7);font-size:12px">Update over</label>
+      <input type="text" id="f-maand" readonly style="background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2);color:rgba(255,255,255,.8);text-transform:capitalize">
     </div>
   </div>
 
@@ -1558,6 +1558,16 @@ const ACTIEPUNTEN_FALLBACK = [
 ];
 let ACTIEPUNTEN = ACTIEPUNTEN_FALLBACK; // will be replaced when sheet loads
 
+// YYYY-MM-DD in LOKALE tijd (niet UTC). toISOString() rekent naar UTC; in CEST (+2) viel een
+// lokaal berekende datum (bv. 2e vrijdag 12 juni, middernacht) terug naar de 11e. Dit lost dat op.
+function toLocalISODate(d) {
+  if (!(d instanceof Date) || isNaN(d)) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 // Parse Dutch date "15-4-2026" or ISO "2026-04-15" to YYYY-MM-DD
 function parseNLDate(s) {
   if (!s) return '';
@@ -1569,7 +1579,7 @@ function parseNLDate(s) {
   if (m) return m[3] + '-' + m[2].padStart(2,'0') + '-' + m[1].padStart(2,'0');
   // Try Date parse as fallback
   const d = new Date(s);
-  if (!isNaN(d)) return d.toISOString().split('T')[0];
+  if (!isNaN(d)) return toLocalISODate(d);
   return s;
 }
 
@@ -1606,7 +1616,7 @@ function renderActiepunten(naam) {
     container.innerHTML = '<div class="act-title">Jouw actiepunten van de vorige All Hands</div><div class="act-no-items">Geen openstaande actiepunten gevonden voor ' + naam + '.</div>';
     return;
   }
-  const today = new Date().toISOString().split('T')[0];
+  const today = toLocalISODate(new Date());
   let html = '<div class="act-title">Jouw actiepunten van de vorige All Hands</div>';
   items.forEach((a, i) => {
     const overdue = !a.done && a.dl < today;
@@ -1870,7 +1880,7 @@ async function ensureAllHandsSnapshotBackfill() {
 
     if (latestMonth) setUpdateMonthLabel(latestMonth);
 
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = toLocalISODate(new Date());
     const pastMeetings = [...new Set((e3Items || []).map(row => row.meeting).filter(m => m && m < todayStr))].sort((a,b) => b.localeCompare(a));
     const meetingVal = pastMeetings[0] || '';
     const meetingLabel = formatMeetingTitle(meetingVal) || latestMonth;
@@ -2378,7 +2388,7 @@ async function saveSingleUpdate(btn) {
 async function saveAccountability(btn) {
   const naam = document.getElementById('f-naam').value;
   if (!naam) { alert('Kies eerst je naam bovenaan.'); return; }
-  const today = new Date().toISOString().split('T')[0];
+  const today = toLocalISODate(new Date());
   // Validate: "niet gedaan" items with overdue deadline MUST have a toelichting
   let hasValidationError = false;
   document.querySelectorAll('#actItems .act-item.act-notdone').forEach(item => {
@@ -2457,7 +2467,7 @@ function getE3MeetingOptions() {
     const sf = secondFriday(m.getFullYear(), m.getMonth());
     if (sf >= new Date(today.getFullYear(), today.getMonth(), today.getDate())) {
       const label = 'E3 ' + sf.toLocaleDateString('nl-NL', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
-      const val = sf.toISOString().split('T')[0];
+      const val = toLocalISODate(sf);
       options.push({label, val});
     }
   }
@@ -2467,7 +2477,7 @@ function getE3MeetingOptions() {
 async function populateE3Meetings() {
   const sel = document.getElementById('e3-meeting');
   if (!sel) return;
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = toLocalISODate(new Date());
   let options = getE3MeetingOptions(); // calculated 2nd Fridays
 
   // Check database for actual meeting dates (overrides from "Datum wijzigen")
@@ -3803,7 +3813,7 @@ function renderDash(updates, actiepunten, e3Items, snapshotMarker, snapshotUpdat
       });
     });
     html += '<div class="dash-section" id="dash-actiepunten" style="border-left:4px solid #EA582D;background:linear-gradient(135deg,#fff8f5,#fff)"><div class="dash-section-title" style="color:#EA582D;border-bottom-color:#EA582D" onclick="this.parentElement.classList.toggle(\'collapsed\')">🤝 Actiepunten — doornemen in de meeting</div><div class="dash-section-body">';
-    const today = new Date().toISOString().split('T')[0];
+    const today = toLocalISODate(new Date());
     Object.keys(byPerson).sort().forEach(naam => {
       const items = byPerson[naam];
       const done = items.filter(i => i.status === 'done');
