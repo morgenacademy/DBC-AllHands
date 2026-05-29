@@ -2510,23 +2510,18 @@ async function populateE3Meetings() {
 
   const prevVal = sel.value;
   sel.innerHTML = options.map((o, i) => `<option value="${o.val}"${i===0?' selected':''}>${o.label}</option>`).join('');
-  // Herstel selectie: lopende sessie eerst, anders de bewaarde keuze (overleeft refresh na 'Meeting afsluiten')
+  // Herstel selectie: lopende sessie eerst, anders bewaarde keuze (overleeft refresh na 'Meeting afsluiten').
+  // ALLEEN herstellen als de meeting nog echt in de lijst staat; anders default (index 0). Voorkomt dat
+  // een verouderde/verplaatste datum uit localStorage een lege 'spookmeeting' toont.
   let savedVal = ''; try { savedVal = localStorage.getItem('dbc_e3_meeting') || ''; } catch(e) {}
   const restoreVal = (prevVal && prevVal >= todayStr) ? prevVal : (savedVal && savedVal >= todayStr ? savedVal : '');
   if (restoreVal) {
-    let found = false;
     for (let i = 0; i < sel.options.length; i++) {
-      if (sel.options[i].value === restoreVal) { sel.selectedIndex = i; found = true; break; }
-    }
-    if (!found) { // bewaarde meeting staat (nog) niet in de lijst -> toevoegen + selecteren
-      const d = new Date(restoreVal + 'T00:00:00');
-      const opt = document.createElement('option');
-      opt.value = restoreVal;
-      opt.textContent = 'E3 ' + d.toLocaleDateString('nl-NL', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
-      sel.appendChild(opt);
-      sel.value = restoreVal;
+      if (sel.options[i].value === restoreVal) { sel.selectedIndex = i; break; }
     }
   }
+  // Synchroniseer localStorage met de écht geselecteerde meeting (ruimt verouderde/spook-datum op)
+  if (sel.options.length) { try { localStorage.setItem('dbc_e3_meeting', sel.options[sel.selectedIndex].value); } catch(e) {} }
   const lbl = document.getElementById('e3-meeting-label');
   if (lbl && sel.options.length) lbl.textContent = 'Volgende: ' + sel.options[sel.selectedIndex].text;
 }
