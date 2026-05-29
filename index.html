@@ -2500,10 +2500,21 @@ async function populateE3Meetings() {
 
   const prevVal = sel.value;
   sel.innerHTML = options.map((o, i) => `<option value="${o.val}"${i===0?' selected':''}>${o.label}</option>`).join('');
-  // Restore previous selection if it still exists
-  if (prevVal && prevVal >= todayStr) {
+  // Herstel selectie: lopende sessie eerst, anders de bewaarde keuze (overleeft refresh na 'Meeting afsluiten')
+  let savedVal = ''; try { savedVal = localStorage.getItem('dbc_e3_meeting') || ''; } catch(e) {}
+  const restoreVal = (prevVal && prevVal >= todayStr) ? prevVal : (savedVal && savedVal >= todayStr ? savedVal : '');
+  if (restoreVal) {
+    let found = false;
     for (let i = 0; i < sel.options.length; i++) {
-      if (sel.options[i].value === prevVal) { sel.selectedIndex = i; break; }
+      if (sel.options[i].value === restoreVal) { sel.selectedIndex = i; found = true; break; }
+    }
+    if (!found) { // bewaarde meeting staat (nog) niet in de lijst -> toevoegen + selecteren
+      const d = new Date(restoreVal + 'T00:00:00');
+      const opt = document.createElement('option');
+      opt.value = restoreVal;
+      opt.textContent = 'E3 ' + d.toLocaleDateString('nl-NL', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
+      sel.appendChild(opt);
+      sel.value = restoreVal;
     }
   }
   const lbl = document.getElementById('e3-meeting-label');
@@ -3068,6 +3079,49 @@ async function saveE3Item(btn) {
   }
 }
 
+// Inline quick-add: actiepunt direct vanuit een agendapunt toevoegen (geen scrollen)
+function toggleInlineActie(btn) {
+  const item = btn.closest('.e3-agenda-item');
+  const form = item ? item.querySelector('.e3-inline-actie') : null;
+  if (!form) return;
+  const show = !form.style.display || form.style.display === 'none';
+  form.style.display = show ? 'block' : 'none';
+  if (show) { const t = form.querySelector('.ia-taak'); if (t) t.focus(); }
+}
+
+async function saveInlineActie(btn) {
+  const form = btn.closest('.e3-inline-actie');
+  if (!form) return;
+  const taak = form.querySelector('.ia-taak').value.trim();
+  const wie = form.querySelector('.ia-wie').value;
+  const dl = form.querySelector('.ia-dl').value;
+  const dod = form.querySelector('.ia-dod').value.trim();
+  if (!wie) { alert('Selecteer wie het actiepunt moet doen.'); return; }
+  if (!taak) { form.querySelector('.ia-taak').focus(); return; }
+  btn.disabled = true; btn.textContent = 'Opslaan...';
+  try {
+    await sbInsert('actiepunten', {
+      wie, taak, definition_of_done: dod, deadline: dl,
+      maand: new Date().toLocaleString('nl-NL', { month: 'long' }),
+      hulp_nodig: '', hulp_toelichting: ''
+    });
+    const saved = form.querySelector('.ia-saved'); if (saved) saved.style.display = 'inline';
+    btn.textContent = '✓'; btn.style.background = '#1A6B3C';
+    form.querySelector('.ia-taak').value = '';
+    form.querySelector('.ia-dod').value = '';
+    form.querySelector('.ia-dl').value = '';
+    loadE3Actiepunten(); // ververs lijst onderaan
+    setTimeout(() => {
+      btn.disabled = false; btn.textContent = '💾 Opslaan'; btn.style.background = '#EA582D';
+      if (saved) saved.style.display = 'none';
+      form.style.display = 'none';
+    }, 1500);
+  } catch(e) {
+    alert('Fout: ' + e.message);
+    btn.disabled = false; btn.textContent = '💾 Opslaan';
+  }
+}
+
 async function saveE3Actie(btn) {
   const wie = document.getElementById('e3-actie-wie').value;
   const tekst = document.getElementById('e3-actie-tekst').value.trim();
@@ -3191,6 +3245,7 @@ async function loadE3Agenda() {
   const previousContainer = document.getElementById('e3PreviousMeeting');
   const activeMeeting = getActiveE3Meeting();
   const activeMeetingVal = activeMeeting ? activeMeeting.val : null;
+  if (activeMeetingVal) { try { localStorage.setItem('dbc_e3_meeting', activeMeetingVal); } catch(e) {} } // onthoud keuze (overleeft refresh)
   const currentUser = getCurrentUserName();
   const vasteAgendaVragen = [
     'Momentje van waardering',
@@ -3311,6 +3366,7 @@ async function loadE3Agenda() {
             <span class="e3-title" style="flex:1">${linkify(esc(vraag))}</span>
             <button class="e3-timer-btn" data-budget="${tijd}" onclick="toggleE3Timer(this)" title="Start/stop timer" style="font-size:10px;color:#888;white-space:nowrap;background:none;border:1px solid #ddd;border-radius:6px;padding:2px 8px;cursor:pointer;font-family:inherit;transition:all .2s">⏱ ${esc(tijd)} min</button>
             ${eigenaar ? `<span style="font-size:11px;color:#005A5B;font-weight:600;white-space:nowrap">${esc(eigenaar)}</span>` : ''}
+            <button onclick="toggleInlineActie(this)" title="Actiepunt toevoegen uit dit punt" style="background:#EA582D;color:#fff;border:none;border-radius:6px;padding:2px 9px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;font-family:inherit">+ Actiepunt</button>
             <button onclick="postponeE3Item(this.closest('.e3-agenda-item'))" class="e3-edit-btn" title="Doorschuiven naar volgende meeting" style="opacity:.4;font-size:11px">⏭</button>
             <button onclick="editE3Item(this.closest('.e3-agenda-item'))" class="e3-edit-btn" title="Bewerken" style="opacity:.4;font-size:11px">✏️</button>
             <button onclick="deleteE3Item(this.closest('.e3-agenda-item'))" class="e3-edit-btn" title="Verwijderen" style="opacity:.4;font-size:11px">🗑</button>
@@ -3355,6 +3411,17 @@ async function loadE3Agenda() {
               <textarea class="e3-conclusie" data-id="${escAttr(row.id)}" data-draftkey="${escAttr(cDraftKey)}" oninput="onConclusieDraft(this)" placeholder="Conclusie / besluit — pas invullen tijdens het overleg" rows="2" style="flex:1;font-size:12px;border:1px dashed #ccc;border-radius:6px;padding:6px 10px;background:#fafafa;resize:vertical;font-family:inherit;color:#333">${escAttr(cInit)}</textarea>
               <button onclick="saveE3Conclusie(this.previousElementSibling)" style="padding:6px 10px;border:none;border-radius:6px;background:#005A5B;color:#fff;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;align-self:stretch">💾</button>
             </div>
+          </div>
+          <div class="e3-inline-actie" style="display:none;margin:6px 0 2px 32px;padding:10px 12px;background:#fff8f5;border:1px solid #f3c9b8;border-left:3px solid #EA582D;border-radius:8px">
+            <div style="font-size:11px;font-weight:700;color:#EA582D;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Nieuw actiepunt uit dit agendapunt</div>
+            <textarea class="ia-taak" placeholder="Wat moet er gebeuren?" rows="2" style="width:100%;font-size:13px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-family:inherit;resize:vertical;box-sizing:border-box"></textarea>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;align-items:center">
+              <select class="ia-wie" style="font-size:13px;padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-family:inherit"><option value="">Wie...</option>${['Anne','Danielle','Samira','Harmen'].map(n=>`<option${n===eigenaar?' selected':''}>${n}</option>`).join('')}</select>
+              <input type="date" class="ia-dl" style="font-size:13px;padding:5px 8px;border:1px solid #ddd;border-radius:6px;font-family:inherit">
+              <input type="text" class="ia-dod" placeholder="Definition of done (optioneel)" style="flex:1;min-width:140px;font-size:13px;padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-family:inherit">
+              <button onclick="saveInlineActie(this)" style="font-size:12px;font-weight:600;background:#EA582D;color:#fff;border:none;border-radius:6px;padding:7px 14px;cursor:pointer;font-family:inherit;white-space:nowrap">💾 Opslaan</button>
+            </div>
+            <span class="ia-saved" style="display:none;font-size:11px;color:#1A6B3C;font-weight:600;margin-top:4px">✓ Toegevoegd aan takenlijst</span>
           </div>
         </div>`;
       });
