@@ -3709,6 +3709,17 @@ function renderDash(updates, actiepunten, e3Items, snapshotMarker, snapshotUpdat
   const currentCycleUpdates = filterCurrentAllHandsUpdates(updates, snapshotMarker);
   const previousAllHandsUpdates = snapshotId ? snapshotUpdates.filter(row => row.snapshotId === snapshotId) : [];
 
+  // YTD (gerealiseerd) is een CUMULATIEF jaarbedrag — niet cyclus-gebonden. Daarom laatste YTD>0 per
+  // stroom uit ALLE updates (op created_at), net als de Updates-tab. Anders valt 't op €0 na 'Meeting afsluiten'.
+  const ytdAllTime = {}; const ytdAllAt = {};
+  updates.forEach(u => {
+    const stroom = u[C.s] || '';
+    const tv = parseYtdValue(u[C.t]);
+    if (!stroom || tv <= 0) return;
+    const at = String(u.created_at || '');
+    if (!(stroom in ytdAllAt) || at >= ytdAllAt[stroom]) { ytdAllAt[stroom] = at; ytdAllTime[stroom] = tv; }
+  });
+
   // No dedup — multiple updates per person per project are allowed
   if (!currentUser) {
     html += '<div style="background:#FFF3E0;border:1px solid #FFB74D;border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:13px;color:#E65100">💡 <strong>Selecteer je naam</strong> in het Updates-tabblad om je eigen updates te kunnen bewerken en verwijderen.</div>';
@@ -3720,9 +3731,9 @@ function renderDash(updates, actiepunten, e3Items, snapshotMarker, snapshotUpdat
     const su = currentCycleUpdates.filter(u => (u[C.s]||'') === s.name);
     const prevSu = previousAllHandsUpdates.filter(u => (u.stroom||'') === s.name && (u.project || u.update_text || u.doel || u.partner));
     if (!su.length && !prevSu.length) return;
-    const pm = {}; let lt = 0; let ltAt = '';
+    const pm = {}; const lt = ytdAllTime[s.name] || 0; // YTD all-time (cumulatief), niet cyclus-gefilterd
     const statusWeight = {'Aandacht nodig':3,'Op schema':2,'Nieuw':1,'Afgerond':0};
-    su.forEach(u => { const pn = fmtProject(u[C.p]||'(algemeen)'); if(!pm[pn]) pm[pn]={entries:[],status:''}; pm[pn].entries.push(u); const ns=u[C.st]||''; if((statusWeight[ns]??-1)>(statusWeight[pm[pn].status]??-1)) pm[pn].status=ns; const tv=parseYtdValue(u[C.t]); const at=String(u.created_at||''); if(tv>0 && at>=ltAt){ ltAt=at; lt=tv; } });
+    su.forEach(u => { const pn = fmtProject(u[C.p]||'(algemeen)'); if(!pm[pn]) pm[pn]={entries:[],status:''}; pm[pn].entries.push(u); const ns=u[C.st]||''; if((statusWeight[ns]??-1)>(statusWeight[pm[pn].status]??-1)) pm[pn].status=ns; });
     const dc = s.id==='kat'?'d-kat':s.id==='bc'?'d-bc':s.id==='mer'?'d-mer':'d-oh';
     const pct = s.target ? Math.min(Math.round((lt/s.target)*100),100) : null;
     const pc = pct===null?'':pct>=80?'#1A6B3C':pct>=40?'#B7860B':'#e74c3c';
@@ -3893,23 +3904,11 @@ function renderDash(updates, actiepunten, e3Items, snapshotMarker, snapshotUpdat
 
   // ── SECTION 4: FINANCIAL SUMMARY (onderaan) ──
   html += '<div class="dash-section"><div class="dash-section-title" onclick="this.parentElement.classList.toggle(\'collapsed\')">💰 Financieel overzicht</div><div class="dash-section-body">';
-  const ytdPerStream = {};
-  const ytdLatestAt = {};
-  currentCycleUpdates.forEach(u => {
-    const stroom = u[C.s] || '';
-    const tv = parseYtdValue(u[C.t]);
-    if (!stroom || tv <= 0) return; // lege/0 YTD negeren: gewone project-updates resetten de teller niet
-    const at = String(u.created_at || '');
-    if (!(stroom in ytdLatestAt) || at >= ytdLatestAt[stroom]) { // laatst ingevoerde YTD wint (ook bij correctie omlaag)
-      ytdLatestAt[stroom] = at;
-      ytdPerStream[stroom] = tv;
-    }
-  });
   let totalTarget = 0, totalRealized = 0;
   html += '<table class="fin-table"><thead><tr><th>Stroom</th><th>Doel (jaar)</th><th>Gerealiseerd (YTD)</th><th>Delta</th><th>%</th></tr></thead><tbody>';
   STREAMS.forEach(s => {
     if (!s.target) return;
-    const realized = ytdPerStream[s.name] || 0;
+    const realized = ytdAllTime[s.name] || 0;
     const delta = realized - s.target;
     const pct = Math.round((realized / s.target) * 100);
     const deltaClass = delta > 0 ? 'fin-pos' : delta < 0 ? 'fin-neg' : 'fin-zero';
